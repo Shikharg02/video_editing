@@ -29,9 +29,15 @@ This script leverages the [MoviePy](https://zulko.github.io/moviepy/) library to
 
 ## 🖼 Example
 
-| **Original Video** | **Video with Timer Overlay** |
-|--------------------|-----------------------------|
-| *(insert screenshot)*  | *(insert screenshot)* |
+| **Original Video** |
+
+<img src = "https://github.com/Shikharg02/video_editing/blob/master/video_editing/original_video.png" width = "600px" height = "400px">
+
+
+| **Video with Timer Overlay** |
+
+<img src = "https://github.com/Shikharg02/video_editing/blob/master/video_editing/overlay_timer_on_video.png" width = "600px" height = "400px">
+
 
 ---
 
