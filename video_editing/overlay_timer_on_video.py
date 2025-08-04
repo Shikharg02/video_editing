@@ -47,7 +47,7 @@ def create_timer_clip(start_time):
             bg_color=None,      # Transparent background; "white", "black" e.t.c.
             method="caption",
             size=(300, 60),     # width and height of caption; adjust as you need
-            duration=60         # Each timer clip appears for 60 seconds
+            duration=1         # Each timer clip appears for 1 seconds
         )
         .with_start(start_time)
         .with_position((0, 0.9), relative=True)  # Place near bottom-left, slightly above the edge
@@ -65,8 +65,7 @@ def overlay_timer_on_video(input_video_path, output_video_path):
     """
     video = VideoFileClip(input_video_path)
     total_duration = int(video.duration)
-    timer_intervals = range(0, total_duration, 60)  # Timer updates every minute(60s interval)
-    # for every second (1s interval)
+    timer_intervals = range(0, total_duration, 1)  # Timer updates every minute(1s interval)
 
     timer_clips = [create_timer_clip(t) for t in timer_intervals]
     composite = CompositeVideoClip([video] + timer_clips)
@@ -94,6 +93,6 @@ if __name__ == "__main__":
     # test_clip.save_frame("test_text_clip.png")
 
     # Input video file path
-    input_video_path = "your_video_file_path"
-    output_video_path = "final_video_file_path"
+    input_video_path = "Imagine for 1 Minute.mp4"
+    output_video_path = "Imagine.mp4"
     overlay_timer_on_video(input_video_path, output_video_path)
