@@ -1,18 +1,18 @@
+import gc
+import os
+import tempfile
+import time
+from io import BytesIO
+
 import streamlit as st
 from moviepy import VideoFileClip, CompositeVideoClip, TextClip
 from moviepy.video.fx.MultiplySpeed import MultiplySpeed
-
-import tempfile
-import os
-import gc
-import time
-from io import BytesIO
 
 st.set_page_config(page_title="Video Timer Overlay Editor", layout="centered")
 st.title("⏱️ MoviePy Video Timer Overlay")
 
 st.sidebar.header("Feature Selection")
-add_timer = st.sidebar.selectbox("Add Timer Overlay?", ["Yes", "No"]) == "Yes"
+add_timer = st.sidebar.selectbox("Add Timer Overlay", ["Yes", "No"]) == "Yes"
 
 # Only show timer options if enabled:
 if add_timer:
@@ -34,9 +34,10 @@ if add_timer:
     bg_color = None if bg_opt == "Transparent" else bg_opt.lower()
     w, h = map(int, st.sidebar.selectbox("Box Size", ["300x60", "400x80", "500x100", "600x120"], 0).split("x"))
 else:
-    overlay_interval = None # For clarity
+    overlay_interval = None  # For clarity
 
-add_fastforward = st.sidebar.header("Fast Forward (Speed/Duration)?", ["None", "1x", "1.5x", "2x", "3x", "4x", "Custom Duration"])
+st.sidebar.header("Fast Forward")
+add_fastforward = st.sidebar.selectbox("Choose", ["None", "1x", "1.5x", "2x", "3x", "4x", "Custom Duration"])
 if add_fastforward == "Custom Duration":
     user_final_duration = st.sidebar.number_input(
         "Final video duration (seconds):",
@@ -51,69 +52,105 @@ else:
     set_custom_duration = False
     speed_factor = float(add_fastforward.replace("x", ""))
 
+
+def _format_hms(total_seconds: float) -> str:
+    """
+    Format seconds -> HH:MM:SS.
+    """
+    if total_seconds < 0:
+        total_seconds = 0.0
+    total_int = int(total_seconds)
+    h = total_int // 3600
+    m = (total_int % 3600) // 60
+    s = total_int % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def timer_clip(t, txt, interval, pos, relative, font_size, font_color, bg_color, w, h):
-    return (
-        TextClip(text=txt, font=None, font_size=font_size, color=font_color,
-                 bg_color=bg_color, method="caption", size=(w, h), duration=interval)
-        .with_start(t)
-        .with_position(pos, relative=relative)
-    )
+    """
+    Create a TextClip that already has duration set (so we don't call set_duration later).
+    Use .with_start() and .with_position() to match your environment's API.
+    """
+    # Create TextClip with duration specified directly (avoids calling set_duration())
+    tc = TextClip(text=txt, font=None, font_size=font_size, color=font_color,
+                  bg_color=bg_color, method="caption", size=(w, h), duration=interval)
+    # Use .with_start and .with_position (original style)
+    return tc.with_start(t).with_position(pos, relative=relative)
+
 
 def overlay_timer_on_video(inp_path: str) -> BytesIO:
     fd, out_path = tempfile.mkstemp(suffix=".mp4")
     os.close(fd)
 
     video = VideoFileClip(inp_path)
-    orig_duration = video.duration
+    orig_duration = video.duration if video.duration and video.duration > 0 else 0.0
 
     # === Fast Forwarding / Custom Duration ===
     if set_custom_duration and user_final_duration:
         video = MultiplySpeed(final_duration=user_final_duration).apply(video)
-        factor = orig_duration / user_final_duration
+        factor = orig_duration / user_final_duration if user_final_duration else 1.0
         final_duration = user_final_duration
     elif not set_custom_duration and (add_fastforward != "None" and add_fastforward != "1x"):
         video = MultiplySpeed(factor=speed_factor).apply(video)
         factor = speed_factor
-        final_duration = orig_duration / speed_factor
+        final_duration = orig_duration / speed_factor if speed_factor != 0 else orig_duration
     else:
         factor = 1.0
         final_duration = orig_duration
 
+    # Protect against weird durations
+    if final_duration <= 0:
+        final_duration = orig_duration or 0.1
+        factor = 1.0
+
     # === Timer Overlay Logic ===
     timer_clips = []
     if add_timer:
-        interval_on_fast = 0.01  # 10 ms update interval for super smooth timer
+        # Tie update to video fps for reasonable number of clips (one clip per frame)
+        fps = int(round(video.fps)) if video.fps else 24
+        # Pick interval as frame duration; prevents thousands of tiny clips for long videos
+        interval_on_fast = 1.0 / max(1, fps)
+
         times = []
         t = 0.0
-        while t < final_duration:
+        # safety cap for frames to avoid memory explosion
+        max_frames = int(min(final_duration * fps, 500000))
+        frame_count = 0
+        while frame_count < max_frames and t < final_duration - 1e-8:
             times.append(t)
-            t += interval_on_fast
-        if not times or times[-1] < final_duration:
+            frame_count += 1
+            t = frame_count * interval_on_fast
+
+        # ensure end included
+        if not times or times[-1] + 1e-8 < final_duration:
             times.append(final_duration)
+
         for t in times:
             shown_timer_val = t * factor
-            h_, rem = divmod(int(shown_timer_val), 3600)
-            m_, s_ = divmod(rem, 60)
-            if interval_on_fast < 1:
-                # Show decimal fractions if needed
-                txt = f"{h_:02d}:{m_:02d}:{s_:02d}"
-            else:
-                txt = f"{h_:02d}:{m_:02d}:{s_:02d}"
-            timer_clips.append(
-                timer_clip(
-                    t, txt, interval=interval_on_fast,
-                    pos=pos, relative=relative, font_size=font_size,
-                    font_color=font_color, bg_color=bg_color, w=w, h=h
-                )
+            txt = _format_hms(shown_timer_val)
+            tc = timer_clip(
+                t, txt, interval=interval_on_fast,
+                pos=pos, relative=relative, font_size=font_size,
+                font_color=font_color, bg_color=bg_color, w=w, h=h
             )
+            timer_clips.append(tc)
 
     # Compose final video
     clips = [video] + timer_clips if timer_clips else [video]
     comp = CompositeVideoClip(clips)
-    comp.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=video.fps)
+    # Use video's fps to write
+    write_fps = int(round(video.fps)) if video.fps else 24
+    comp.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=write_fps)
 
-    comp.close()
-    video.close()
+    # cleanup
+    try:
+        comp.close()
+    except Exception:
+        pass
+    try:
+        video.close()
+    except Exception:
+        pass
     gc.collect()
     time.sleep(0.2)
     with open(out_path, "rb") as f:
@@ -128,10 +165,12 @@ def overlay_timer_on_video(inp_path: str) -> BytesIO:
         st.warning("Could not delete temp output file (still in use). OS will clean up later.")
     return buf
 
+
 uploaded = st.file_uploader("Upload video", ["mp4", "avi", "mov", "mkv"])
 if uploaded:
     inp_fd, inp_path = tempfile.mkstemp(suffix=".mp4")
-    with os.fdopen(inp_fd, "wb") as f: f.write(uploaded.read())
+    with os.fdopen(inp_fd, "wb") as f:
+        f.write(uploaded.read())
     st.video(inp_path)
 
     if st.button("Generate Video"):
@@ -154,3 +193,5 @@ if uploaded:
             file_name="video_with_timer.mp4",
             mime="video/mp4"
         )
+else:
+    st.info("Upload a video to start.")
